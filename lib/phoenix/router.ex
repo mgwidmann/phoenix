@@ -31,6 +31,11 @@ defmodule Phoenix.Router do
   The `get/3` macro above accepts a request of format "/pages/VALUE" and
   dispatches it to the show action in the `PageController`.
 
+  Routes can also match glob-like patterns, routing any path with a common
+  base to the same controller. For example:
+
+      get "/dynamic*anything", DynamicController, :show
+
   Phoenix's router is extremely efficient, as it relies on Elixir
   pattern matching for matching routes and serving requests.
 
@@ -116,7 +121,7 @@ defmodule Phoenix.Router do
 
   ## Pipelines and plugs
 
-  Once a request arrives to the Phoenix router, it performs
+  Once a request arrives at the Phoenix router, it performs
   a series of transformations through pipelines until the
   request is dispatched to a desired end-point.
 
@@ -131,7 +136,7 @@ defmodule Phoenix.Router do
 
         pipeline :browser do
           plug :fetch_session
-          plug :accepts, ~w(html json)
+          plug :accepts, ["html"]
         end
 
         scope "/" do
@@ -153,7 +158,7 @@ defmodule Phoenix.Router do
   Channels allow you to route pubsub events to channel handlers in your application.
   By default, Phoenix supports both WebSocket and LongPoller transports.
   See the `Phoenix.Channel.Transport` documentation for more information on writing
-  your own transports. Chanenls are defined with a `socket` mount, ie:
+  your own transports. Channels are defined with a `socket` mount, ie:
 
       defmodule MyApp.Router do
         use Phoenix.Router
@@ -176,7 +181,8 @@ defmodule Phoenix.Router do
   defmacro __using__(_) do
     quote do
       unquote(prelude())
-      unquote(plug())
+      unquote(defs())
+      unquote(match_dispatch(__CALLER__))
     end
   end
 
@@ -196,11 +202,64 @@ defmodule Phoenix.Router do
     end
   end
 
-  defp plug() do
-    {conn, pipeline} =
-      [:dispatch, :match]
-      |> Enum.map(&{&1, [], true})
-      |> Plug.Builder.compile()
+  # Because those macros are executed multiple times,
+  # we end-up generating a huge scope that drastically
+  # affects compilation. We work around it then by
+  # defining the add_route definition only once and
+  # simply calling it over and over again.
+  defp defs() do
+    quote unquote: false do
+      var!(add_route, Phoenix.Router) = fn route ->
+        exprs = Route.exprs(route)
+        @phoenix_routes {route, exprs}
+
+        defp match(var!(conn), unquote(route.verb), unquote(exprs.path),
+                   unquote(exprs.host)) do
+          unquote(exprs.dispatch)
+        end
+      end
+
+      var!(add_resource, Phoenix.Router) = fn resource ->
+        path = resource.path
+        ctrl = resource.controller
+        opts = resource.route
+
+        Enum.each resource.actions, fn
+          :show    -> get    path,            ctrl, :show, opts
+          :new     -> get    path <> "/new",  ctrl, :new, opts
+          :edit    -> get    path <> "/edit", ctrl, :edit, opts
+          :create  -> post   path,            ctrl, :create, opts
+          :delete  -> delete path,            ctrl, :delete, opts
+          :update  ->
+            patch path, ctrl, :update, opts
+            put   path, ctrl, :update, Keyword.put(opts, :as, nil)
+        end
+      end
+
+      var!(add_resources, Phoenix.Router) = fn resource ->
+        parm = resource.param
+        path = resource.path
+        ctrl = resource.controller
+        opts = resource.route
+
+        Enum.each resource.actions, fn
+          :index   -> get    path,                            ctrl, :index, opts
+          :show    -> get    path <> "/:" <> parm,            ctrl, :show, opts
+          :new     -> get    path <> "/new",                  ctrl, :new, opts
+          :edit    -> get    path <> "/:" <> parm <> "/edit", ctrl, :edit, opts
+          :create  -> post   path,                            ctrl, :create, opts
+          :delete  -> delete path <> "/:" <> parm,            ctrl, :delete, opts
+          :update  ->
+            patch path <> "/:" <> parm, ctrl, :update, opts
+            put   path <> "/:" <> parm, ctrl, :update, Keyword.put(opts, :as, nil)
+        end
+      end
+    end
+  end
+
+  defp match_dispatch(env) do
+    plugs = [{:dispatch, [], true}, {:match, [], true}]
+    {conn, pipeline} = Plug.Builder.compile(env, plugs, [])
 
     call =
       quote do
@@ -234,7 +293,12 @@ defmodule Phoenix.Router do
       end
 
       defp dispatch(conn, []) do
-        conn.private.phoenix_route.(conn)
+        try do
+          conn.private.phoenix_route.(conn)
+        catch
+          kind, reason ->
+            Plug.Conn.WrapperError.reraise(conn, kind, reason)
+        end
       end
 
       defoverridable [init: 1, call: 2]
@@ -247,10 +311,11 @@ defmodule Phoenix.Router do
     channels = env.module |> Module.get_attribute(:phoenix_channels) |> Helpers.defchannels
 
     Helpers.define(env, routes)
+    escaped = Enum.map(routes, fn {route, _} -> Macro.escape(route) end)
 
     quote do
       @doc false
-      def __routes__,  do: unquote(Macro.escape(routes))
+      def __routes__,  do: unquote(escaped)
 
       @doc false
       def __helpers__, do: __MODULE__.Helpers
@@ -274,26 +339,11 @@ defmodule Phoenix.Router do
   end
 
   defp add_route(verb, path, controller, action, options) do
-    quote bind_quoted: binding() do
-      route = Scope.route(__MODULE__, verb, path, controller, action, options)
-      parts = {:%{}, [], route.binding}
-
-      @phoenix_routes route
-
-      defp match(var!(conn), unquote(route.verb), unquote(route.path_segments),
-                 unquote(route.host_segments)) do
-        unquote(Route.maybe_merge(:private, route.private))
-
-        var!(conn) =
-          update_in(var!(conn).params, &Map.merge(&1, unquote(parts)))
-          |> Plug.Conn.put_private(:phoenix_pipelines, unquote(route.pipe_through))
-          |> Plug.Conn.put_private(:phoenix_route, fn conn ->
-              opts = unquote(route.controller).init(unquote(route.action))
-              unquote(route.controller).call(conn, opts)
-             end)
-
-        unquote(route.pipe_segments)
-      end
+    quote do
+      var!(add_route, Phoenix.Router).(
+        Scope.route(__MODULE__, unquote(verb), unquote(path), unquote(controller),
+                                unquote(action), unquote(options))
+      )
     end
   end
 
@@ -322,19 +372,34 @@ defmodule Phoenix.Router do
   defmacro pipeline(plug, do: block) do
     block =
       quote do
+        plug = unquote(plug)
         @phoenix_pipeline []
         unquote(block)
       end
 
     compiler =
-      quote bind_quoted: [plug: plug] do
+      quote unquote: false do
         Scope.pipeline(__MODULE__, plug)
-        {conn, body} = Plug.Builder.compile(@phoenix_pipeline)
-        defp unquote(plug)(unquote(conn), _), do: unquote(body)
+        {conn, body} = Plug.Builder.compile(__ENV__, @phoenix_pipeline, [])
+        defp unquote(plug)(unquote(conn), _) do
+          try do
+            unquote(body)
+          catch
+            kind, reason ->
+              Plug.Conn.WrapperError.reraise(unquote(conn), kind, reason)
+          end
+        end
         @phoenix_pipeline nil
       end
 
-    [block, compiler]
+    quote do
+      try do
+        unquote(block)
+        unquote(compiler)
+      after
+        :ok
+      end
+    end
   end
 
   @doc """
@@ -469,59 +534,32 @@ defmodule Phoenix.Router do
   end
 
   defp add_resources(path, controller, options, do: context) do
-    quote do
-      resource = Resource.build(unquote(path), unquote(controller), unquote(options))
-
-      parm = resource.param
-      path = resource.path
-      ctrl = resource.controller
-      opts = resource.route
-
-      Enum.each resource.actions, fn action ->
-        case action do
-          :index   -> get    "#{path}",               ctrl, :index, opts
-          :show    -> get    "#{path}/:#{parm}",      ctrl, :show, opts
-          :new     -> get    "#{path}/new",           ctrl, :new, opts
-          :edit    -> get    "#{path}/:#{parm}/edit", ctrl, :edit, opts
-          :create  -> post   "#{path}",               ctrl, :create, opts
-          :delete  -> delete "#{path}/:#{parm}",      ctrl, :delete, opts
-          :update  ->
-            patch "#{path}/:#{parm}", ctrl, :update, opts
-            put   "#{path}/:#{parm}", ctrl, :update, Keyword.put(opts, :as, nil)
+    scope =
+      if context do
+        quote do
+          scope resource.member, do: unquote(context)
         end
       end
 
-      scope resource.member do
-        unquote(context)
-      end
+    quote do
+      resource = Resource.plural(unquote(path), unquote(controller), unquote(options))
+      var!(add_resources, Phoenix.Router).(resource)
+      unquote(scope)
     end
   end
 
   defp add_resource(path, controller, options, do: context) do
-    quote do
-      opts     = Keyword.merge(unquote(options), singular: true)
-      resource = Resource.build(unquote(path), unquote(controller), opts)
-
-      path = resource.path
-      ctrl = resource.controller
-      opts = resource.route
-
-      Enum.each resource.actions, fn action ->
-        case action do
-          :show    -> get    "#{path}",      ctrl, :show, opts
-          :new     -> get    "#{path}/new",  ctrl, :new, opts
-          :edit    -> get    "#{path}/edit", ctrl, :edit, opts
-          :create  -> post   "#{path}",      ctrl, :create, opts
-          :delete  -> delete "#{path}",      ctrl, :delete, opts
-          :update  ->
-            patch "#{path}", ctrl, :update, opts
-            put   "#{path}", ctrl, :update, Keyword.put(opts, :as, nil)
+    scope =
+      if context do
+        quote do
+          scope resource.member, do: unquote(context)
         end
       end
 
-      scope resource.member do
-        unquote(context)
-      end
+    quote do
+      resource = Resource.singular(unquote(path), unquote(controller), unquote(options))
+      var!(add_resource, Phoenix.Router).(resource)
+      unquote(scope)
     end
   end
 
@@ -651,28 +689,34 @@ defmodule Phoenix.Router do
     add_socket(mount, [alias: chan_alias], chan_block)
   end
   defmacro socket(mount, chan_alias, opts, do: chan_block) do
-    add_socket(mount, Dict.merge(opts, alias: chan_alias), chan_block)
+    add_socket(mount, Keyword.put(opts, :alias, chan_alias), chan_block)
   end
   defp add_socket(mount, opts, chan_block) do
-    quote bind_quoted: [mount: mount, opts: opts], unquote: true do
-      if Scope.inside_scope?(__MODULE__) do
-        raise """
-        You are trying to call `socket` within a `scope` definition.
-        Please move your socket and channel definitions outside of any scope block.
-        """
-      end
+    quote do
+      (fn ->
+        mount = unquote(mount)
+        opts  = unquote(opts)
 
-      @phoenix_socket_mount mount
-      @phoenix_transports opts[:via]
-      @phoenix_channel_alias opts[:alias]
-      get  @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade, Dict.take(opts, [:as])
-      post @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade
-      get  @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :poll
-      post @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :publish
-      unquote(chan_block)
-      @phoenix_socket_mount nil
-      @phoenix_transports nil
-      @phoenix_channel_alias nil
+        if Scope.inside_scope?(__MODULE__) do
+          raise """
+          You are trying to call `socket` within a `scope` definition.
+          Please move your socket and channel definitions outside of any scope block.
+          """
+        end
+
+        @phoenix_socket_mount mount
+        @phoenix_transports opts[:via]
+        @phoenix_channel_alias opts[:alias]
+        get     @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade, Dict.take(opts, [:as])
+        post    @phoenix_socket_mount, Phoenix.Transports.WebSocket, :upgrade
+        options @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :options
+        get     @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :poll
+        post    @phoenix_socket_mount <> "/poll", Phoenix.Transports.LongPoller, :publish
+        unquote(chan_block)
+        @phoenix_socket_mount nil
+        @phoenix_transports nil
+        @phoenix_channel_alias nil
+      end).()
     end
   end
 

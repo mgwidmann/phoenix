@@ -4,7 +4,7 @@ defmodule Phoenix.PubSub.Local do
   @moduledoc """
   PubSub implementation for handling local-node process groups
 
-  This modules is used by Phoenix pubsub adapters to handle their
+  This module is used by Phoenix pubsub adapters to handle their
   local node topic subscriptions. See `Phoenix.PubSub.PG2`
   for an example integration.
   """
@@ -35,8 +35,9 @@ defmodule Phoenix.PubSub.Local do
       :ok
 
   """
-  def subscribe(local_server, pid, topic, opts \\ []),
-    do: GenServer.call(local_server, {:subscribe, pid, topic, opts})
+  def subscribe(local_server, pid, topic, opts \\ []) do
+    GenServer.call(local_server, {:subscribe, pid, topic, opts})
+  end
 
   @doc """
   Unsubscribes the pid from the topic
@@ -56,7 +57,7 @@ defmodule Phoenix.PubSub.Local do
   end
 
   @doc """
-  Sends a message to allow subscribers of a topic
+  Sends a message to all subscribers of a topic
 
     * `local_server` - The registered server name or pid
     * `topic` - The string topic, ie "users:123"
@@ -117,7 +118,7 @@ defmodule Phoenix.PubSub.Local do
   end
 
   def handle_call({:subscribers, topic}, _from, state) do
-    {:reply, HashDict.get(state.topics, topic, HashSet.new), state}
+    {:reply, HashDict.get(state.topics, topic, HashSet.new) |> Enum.to_list, state}
   end
 
   def handle_call({:subscribe, pid, topic, opts}, _from, state) do

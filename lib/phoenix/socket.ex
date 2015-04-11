@@ -5,7 +5,7 @@ defmodule Phoenix.Socket do
 
   ## Socket Fields
 
-  * `pid` - The Pid of the socket's transport process
+  * `transport_pid` - The Pid of the socket's transport process
   * `topic` - The string topic, ie `"rooms:123"`
   * `router` - The router module where this socket originated
   * `endpoint` - The endpoint module where this socket originated
@@ -14,6 +14,7 @@ defmodule Phoenix.Socket do
   * `assigns` - The map of socket assigns, default: `%{}`
   * `transport` - The socket's Transport, ie: `Phoenix.Transports.WebSocket`
   * `pubsub_server` - The registered name of the socket's PubSub server
+  * `ref` - The latest ref sent by the client
 
 
   """
@@ -21,14 +22,17 @@ defmodule Phoenix.Socket do
   alias Phoenix.Socket
 
   @derive [Access]
-  defstruct pid: nil,
+  defstruct transport_pid: nil,
             topic: nil,
             router: nil,
+            endpoint: nil,
             channel: nil,
             authorized: false,
             transport: nil,
             pubsub_server: nil,
             conn: nil,
+            ref: nil,
+            joined: false,
             assigns: %{}
 
 

@@ -17,7 +17,7 @@ defmodule Phoenix.Controller.LoggerTest do
       |> put_private(:phoenix_pipelines, [:browser])
       |> action
     end
-    assert output =~ "[debug] Processing by Phoenix.Controller.LoggerTest.LoggerController.index/2"
+    assert output =~ "[info]  Processing by Phoenix.Controller.LoggerTest.LoggerController.index/2"
     assert output =~ "Parameters: %{\"foo\" => \"bar\", \"format\" => \"html\"}"
     assert output =~ "Pipelines: [:browser]"
   end
@@ -88,7 +88,8 @@ defmodule Phoenix.Controller.LoggerTest do
 
   test "does not filter unfetched parameters" do
     output = capture_log fn ->
-      conn(:get, "/", "{foo:bar}", headers: [{"content-type", "application/json"}])
+      conn(:get, "/", "{foo:bar}")
+      |> put_req_header("content-type", "application/json")
       |> action
     end
     assert output =~ "Parameters: [UNFETCHED]"

@@ -1,4 +1,4 @@
-![phoenix logo](https://raw.githubusercontent.com/phoenixframework/phoenix/master/priv/static/images/phoenix.png)
+![phoenix logo](https://raw.githubusercontent.com/phoenixframework/phoenix/master/priv/static/phoenix.png)
 > Elixir Web Framework targeting full-featured, fault tolerant applications with realtime functionality
 
 [![Build Status](https://api.travis-ci.org/phoenixframework/phoenix.svg)](https://travis-ci.org/phoenixframework/phoenix)
@@ -12,19 +12,26 @@ See the official site at http://www.phoenixframework.org/
 
 API documentation is available at [http://hexdocs.pm/phoenix](http://hexdocs.pm/phoenix)
 
-## Development
+## Contributing
 
-There are no guidelines yet. Do what feels natural. Submit a bug, join a discussion, open a pull request.
+We appreciate any contribution to Phoenix, so check out our [CONTRIBUTING.md](CONTRIBUTING.md) guide for more information. We usually keep a list of features and bugs [in the issue tracker][1].
+
+### Running a Phoenix master app
+
+```bash
+$ cd installer
+$ mix phoenix.new path/to/your/app --dev
+```
+
+The command above will create a new application, using your current Phoenix checkout thanks to the `--dev` flag.
 
 ### Building phoenix.js
 
 ```bash
-$ 6to5 -w assets/js/phoenix.js -o priv/static/js/phoenix.js
+$ npm install
+$ npm install -g brunch
+$ brunch watch
 ```
-
-## Contributing
-
-We appreciate any contribution to Phoenix, so check out our [CONTRIBUTING.md](CONTRIBUTING.md) guide for more information. We usually keep a list of features and bugs [in the issue tracker][1].
 
 ## Important links
 
